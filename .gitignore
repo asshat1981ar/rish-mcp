@@ -37,6 +37,9 @@ server/setup
 server/coverage.out
 server/*.test
 
+# scripts/codespaces-build.sh static-binary output
+/dist/
+
 # Secrets
 .env
 *.env

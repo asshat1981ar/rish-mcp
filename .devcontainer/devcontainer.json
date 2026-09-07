@@ -1,0 +1,29 @@
+{
+  "name": "rish-mcp",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+  "features": {
+    "ghcr.io/devcontainers/features/go:1": {
+      "version": "1.23"
+    },
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {
+      "version": "latest"
+    },
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "22"
+    }
+  },
+  "hostRequirements": {
+    "memory": "4gb"
+  },
+  "postCreateCommand": "cd server && go mod download",
+  "remoteUser": "vscode",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "golang.go",
+        "mathiasfrohlich.Kotlin",
+        "ms-azuretools.vscode-docker"
+      ]
+    }
+  }
+}
