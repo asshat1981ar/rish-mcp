@@ -196,8 +196,9 @@ Or claude.ai custom connectors (OAuth) — see [§6](#6-oauth-20-reference).
 
 ## 5. Tool reference
 
-Unchanged from the original design — this is the one part of the contract
-that stayed fixed across the rewrite.
+The original two tools are unchanged; a device-control pack was added on top
+of the same exec protocol (all tools accept optional `deviceId` — required
+only when more than one device is connected — and optional `timeoutMs`).
 
 ### `list_devices()`
 
@@ -223,6 +224,43 @@ exit=<code> (<durationMs>ms)[ [output truncated]]
 
 A non-zero exit code sets `isError: true`. `deviceId` is required only when
 more than one device is connected.
+
+### Device-control tools
+
+Server-side wrappers (`server/internal/tools`) over the same exec protocol —
+they compose shell commands the agent already knows how to run, so **no agent
+update is required**. Every user-supplied string is shell-quoted or strictly
+validated before it reaches the device.
+
+| Tool | Args | Behavior |
+|---|---|---|
+| `device_info` | — | One `getprop`/`dumpsys` composite; returns JSON: model, manufacturer, release, sdk, screen, batteryLevel, batteryStatus, storageData, locale |
+| `screenshot` | — | `screencap -p` → base64 → chunked transfer (bypasses the agent's 256 KiB output cap); returns MCP `image` content (`image/png`) plus a size note. Cap ~4.5 MiB |
+| `ui_dump` | — | `uiautomator dump` to a temp file, pulled in chunks, then compacted server-side to clickable elements with `bounds="[x1,y1][x2,y2]"` |
+| `tap` | `x`, `y` | `input tap`; coords validated 0..32767 |
+| `swipe` | `x`, `y`, `x2`, `y2`, `durationMs?` | `input swipe`; duration default 300, max 10000 |
+| `key_event` | `keycode` | `input keyevent`; accepts numeric or `KEYCODE_*` names only |
+| `type_text` | `text` | `input text`; printable ASCII ≤512 chars, spaces encoded as `%s` per the input tool's convention |
+| `file_pull` | `path` | Chunked base64 read of any shell-readable absolute path; returns size + base64. Cap ~4.5 MiB |
+| `file_push` | `path`, `contentBase64` | Staged in `/data/local/tmp` via quoted `printf` appends, then base64-decoded on-device; target must be an absolute writable path. Cap ~1.5 MiB |
+| `list_apps` | `scope?`, `filter?` | `pm list packages` (`-3` for user, `-s` for system) piped to quoted `grep -F`; "no matches" is not an error |
+| `logcat_tail` | `lines?`, `tag?`, `priority?` | `logcat -d -v time -t N` (default 200, cap 5000), optional `-s '<tag>':<V\|D\|I\|W\|E\|F>` |
+
+Path arguments must be absolute, with no `..` segments and no NUL bytes
+(`validateDevicePath`). Coordinate, keycode, priority and length validation
+errors surface as `isError: true` results without touching the device.
+
+### Prompts ("skills")
+
+The server also implements MCP's prompts capability (`prompts/list`,
+`prompts/get` with `{{arg}}` interpolation):
+
+- `android_ui_task({task})` — the screenshot/ui_dump → tap/swipe → verify loop,
+  with safety rules (no account/payment/security changes, ask before
+  destructive steps).
+- `android_device_report()` — inventory/health report workflow.
+- `android_app_debug({package, symptom})` — launch, reproduce, capture
+  logcat/tombstones, report.
 
 ---
 

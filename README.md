@@ -160,6 +160,26 @@ Same tool surface as before — this part of the contract didn't change:
 - `run_shell({cmd, deviceId?, timeoutMs?})` — run a command as shell uid;
   returns stdout, stderr, exit code.
 
+Plus a device-control tool pack (server-side wrappers over the same exec
+protocol — no agent update needed):
+
+- `device_info()` — structured JSON snapshot: model, manufacturer, Android
+  version, battery, storage, screen, locale.
+- `screenshot()` — PNG capture returned as MCP image content.
+- `ui_dump()` — accessibility tree (compact XML) with element bounds for
+  reliable tap targeting.
+- `tap({x, y})`, `swipe({x, y, x2, y2, durationMs?})` — touch injection.
+- `key_event({keycode})` — KEYCODE_HOME/BACK/ENTER/… or numeric keycodes.
+- `type_text({text})` — types into the focused field (printable ASCII).
+- `file_pull({path})` / `file_push({path, contentBase64})` — chunked base64
+  file transfer (≤ ~4.5 MiB pull, ≤ ~1.5 MiB push).
+- `list_apps({scope?, filter?})` — installed packages (all/user/system).
+- `logcat_tail({lines?, tag?, priority?})` — recent system/app logs.
+
+MCP **prompts** ("skills") are also served: `android_ui_task`,
+`android_device_report`, `android_app_debug` — fetchable workflow templates
+via `prompts/list` / `prompts/get`.
+
 Full tool reference, OAuth flow, and the WS relay protocol are documented in
 [`docs/USAGE.md`](docs/USAGE.md).
 

@@ -7,6 +7,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"strings"
 )
 
 type Request struct {
@@ -44,7 +45,33 @@ type InputSchema struct {
 
 type ContentItem struct {
 	Type string `json:"type"`
-	Text string `json:"text"`
+	Text string `json:"text,omitempty"`
+	// Data and MimeType carry non-text MCP content (e.g. base64 PNG images
+	// returned by the screenshot tool). Text items leave both empty.
+	Data     string `json:"data,omitempty"`
+	MimeType string `json:"mimeType,omitempty"`
+}
+
+// Prompt is one MCP prompt template ("skill"): a reusable instruction set the
+// AI client can fetch via prompts/get. Arguments are interpolated by simple
+// {{name}} replacement at fetch time.
+type Prompt struct {
+	Name        string
+	Description string
+	Arguments   []PromptArgument
+	Text        string
+}
+
+type PromptArgument struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Required    bool   `json:"required,omitempty"`
+}
+
+type promptDef struct {
+	Name        string           `json:"name"`
+	Description string           `json:"description"`
+	Arguments   []PromptArgument `json:"arguments,omitempty"`
 }
 
 // CallResult is a tool's response, shaped like MCP's tools/call result.
@@ -73,6 +100,7 @@ type Server struct {
 	Name    string
 	Version string
 	tools   []Tool
+	prompts []Prompt
 }
 
 func NewServer(name, version string) *Server {
@@ -83,14 +111,24 @@ func (s *Server) RegisterTool(t Tool) {
 	s.tools = append(s.tools, t)
 }
 
+// RegisterPrompt adds a prompt template ("skill") served via prompts/list and
+// prompts/get.
+func (s *Server) RegisterPrompt(p Prompt) {
+	s.prompts = append(s.prompts, p)
+}
+
 // Handle processes one JSON-RPC request and returns the response to send,
 // or nil when req was a notification (no response expected/allowed).
 func (s *Server) Handle(ctx context.Context, req Request) *Response {
 	switch req.Method {
 	case "initialize":
+		caps := map[string]any{"tools": map[string]any{}}
+		if len(s.prompts) > 0 {
+			caps["prompts"] = map[string]any{"listChanged": false}
+		}
 		return &Response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{
 			"protocolVersion": "2024-11-05",
-			"capabilities":    map[string]any{"tools": map[string]any{}},
+			"capabilities":    caps,
 			"serverInfo":      map[string]any{"name": s.Name, "version": s.Version},
 		}}
 	case "notifications/initialized", "notifications/cancelled":
@@ -101,11 +139,50 @@ func (s *Server) Handle(ctx context.Context, req Request) *Response {
 			defs = append(defs, toolDef{Name: t.Name, Description: t.Description, InputSchema: t.InputSchema})
 		}
 		return &Response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"tools": defs}}
+	case "prompts/list":
+		defs := make([]promptDef, 0, len(s.prompts))
+		for _, p := range s.prompts {
+			defs = append(defs, promptDef{Name: p.Name, Description: p.Description, Arguments: p.Arguments})
+		}
+		return &Response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"prompts": defs}}
+	case "prompts/get":
+		return s.handlePromptGet(req)
 	case "tools/call":
 		return s.handleToolsCall(ctx, req)
 	default:
 		return &Response{JSONRPC: "2.0", ID: req.ID, Error: &RPCError{Code: -32601, Message: "method not found"}}
 	}
+}
+
+type promptGetParams struct {
+	Name      string            `json:"name"`
+	Arguments map[string]string `json:"arguments"`
+}
+
+// handlePromptGet resolves a registered prompt template, interpolating any
+// {{name}} placeholders from the supplied arguments.
+func (s *Server) handlePromptGet(req Request) *Response {
+	var p promptGetParams
+	if err := json.Unmarshal(req.Params, &p); err != nil {
+		return &Response{JSONRPC: "2.0", ID: req.ID, Error: &RPCError{Code: -32602, Message: "invalid params"}}
+	}
+	for _, prompt := range s.prompts {
+		if prompt.Name != p.Name {
+			continue
+		}
+		text := prompt.Text
+		for k, v := range p.Arguments {
+			text = strings.ReplaceAll(text, "{{"+k+"}}", v)
+		}
+		return &Response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{
+			"description": prompt.Description,
+			"messages": []map[string]any{{
+				"role":    "user",
+				"content": map[string]string{"type": "text", "text": text},
+			}},
+		}}
+	}
+	return &Response{JSONRPC: "2.0", ID: req.ID, Error: &RPCError{Code: -32602, Message: "unknown prompt: " + p.Name}}
 }
 
 type callParams struct {

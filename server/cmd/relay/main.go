@@ -1,6 +1,7 @@
-// Command relay is the rish-mcp relay + MCP server: it exposes run_shell and
-// list_devices to AI/MCP clients over POST /mcp, and accepts the outbound
-// WebSocket from Android agents on GET /agent.
+// Command relay is the rish-mcp relay + MCP server: it exposes run_shell,
+// list_devices and the device-control tool pack to AI/MCP clients over
+// POST /mcp, and accepts the outbound WebSocket from Android agents on
+// GET /agent.
 package main
 
 import (
@@ -23,6 +24,7 @@ import (
 	"github.com/turin-dev/rish-mcp/server/internal/mcp"
 	"github.com/turin-dev/rish-mcp/server/internal/oauth"
 	"github.com/turin-dev/rish-mcp/server/internal/relay"
+	"github.com/turin-dev/rish-mcp/server/internal/tools"
 )
 
 func main() {
@@ -130,9 +132,9 @@ func newMux(
 	return mux
 }
 
-// buildMCPServer wires the two MCP tools to the device registry. The tool
-// contracts (name, args, response text shape) are carried over unchanged
-// from the old TS server — see docs/DESIGN.md §3.3.
+// buildMCPServer wires the MCP tools to the device registry: the two original
+// tools (contracts carried over unchanged from the old TS server — see
+// docs/DESIGN.md §3.3) plus the device-control pack from internal/tools.
 func buildMCPServer(reg *relay.Registry, defaultTimeout, maxTimeout time.Duration) *mcp.Server {
 	s := mcp.NewServer("rish-mcp", "0.1.0")
 
@@ -159,6 +161,12 @@ func buildMCPServer(reg *relay.Registry, defaultTimeout, maxTimeout time.Duratio
 		InputSchema: mcp.InputSchema{Type: "object", Properties: map[string]mcp.Property{}},
 		Handler:     listDevicesHandler(reg),
 	})
+
+	// Device-control tool pack (device_info, screenshot, ui_dump, tap, swipe,
+	// key_event, type_text, file_pull, file_push, list_apps, logcat_tail) plus
+	// prompt templates ("skills"). All run through the same exec protocol, so
+	// they work with already-deployed agents — see internal/tools.
+	tools.Register(s, reg, defaultTimeout, maxTimeout)
 
 	return s
 }
